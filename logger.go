@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/codegangsta/negroni"
+	"github.com/sirupsen/logrus"
 )
 
 // Middleware is a middleware handler that logs the request as it goes in and the response as it goes out.

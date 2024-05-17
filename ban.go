@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/julienschmidt/httprouter"
+	"github.com/sirupsen/logrus"
 )
 
 type BanPost struct {
@@ -24,16 +24,25 @@ func PostBan(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
 	err := decoder.Decode(&banpost)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
+		_, err = w.Write([]byte(err.Error()))
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	}
 	if banpost.Pattern == "" && banpost.Vcl == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Pattern or VCL is required"))
+		_, err = w.Write([]byte("Pattern or VCL is required"))
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	} else if banpost.Pattern != "" && banpost.Vcl != "" {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Pattern or VCL is required, not both"))
+		_, err = w.Write([]byte("Pattern or VCL is required, not both"))
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	}
 	if s, ok := services[service]; ok {
@@ -53,11 +62,17 @@ func PostBan(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
 		}
 		// Wait for all BANs to complete.
 		wg.Wait()
-		r.JSON(w, http.StatusOK, messages)
+		err = r.JSON(w, http.StatusOK, messages)
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	} else {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("Service could not be found."))
+		_, err = w.Write([]byte("Service could not be found."))
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	}
 }
@@ -69,12 +84,20 @@ func Banner(server string, banpost BanPost, secret string, req *http.Request) st
 		return err.Error()
 	}
 	defer conn.Close()
-	varnishAuth(server, secret, conn)
+	err = varnishAuth(server, secret, conn)
+	if err != nil {
+		log.Printf("Authentication error : %s", err.Error())
+		return err.Error()
+	}
 	// sending the magic ban commmand to varnish.
 	if banpost.Pattern != "" {
-		conn.Write([]byte("ban req.url ~ " + banpost.Pattern + "$\n"))
+		_, err = conn.Write([]byte("ban req.url ~ " + banpost.Pattern + "$\n"))
 	} else {
-		conn.Write([]byte("ban " + banpost.Vcl + "\n"))
+		_, err = conn.Write([]byte("ban " + banpost.Vcl + "\n"))
+	}
+	if err != nil {
+		log.Printf("Could not write packet : %s", err.Error())
+		return err.Error()
 	}
 	// again, 64 bytes is enough for this.
 	byte_status := make([]byte, 64)

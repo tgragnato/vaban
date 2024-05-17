@@ -18,9 +18,12 @@ func Pinger(server string, secret string) string {
 	defer conn.Close()
 	err = varnishAuth(server, secret, conn)
 	if err != nil {
-		log.Println(err)
+		return err.Error()
 	}
-	conn.Write([]byte("ping\n"))
+	_, err = conn.Write([]byte("ping\n"))
+	if err != nil {
+		return err.Error()
+	}
 	pong := make([]byte, 32)
 	_, err = conn.Read(pong)
 	if err != nil {
@@ -51,10 +54,20 @@ func GetPing(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
 		}
 		// Wait for all PINGs to complete.
 		wg.Wait()
-		r.JSON(w, http.StatusOK, messages)
+		err := r.JSON(w, http.StatusOK, messages)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err = w.Write([]byte(err.Error()))
+			if err != nil {
+				log.Println(err)
+			}
+		}
 	} else {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("Service could not be found."))
+		_, err := w.Write([]byte("Service could not be found."))
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	}
 }

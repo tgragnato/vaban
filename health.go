@@ -5,18 +5,17 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/julienschmidt/httprouter"
+	"github.com/sirupsen/logrus"
 )
 
 type HealthStatus struct {
-	Refs  string
-	Admin string
-	Probe string
+	Admin  string
+	Probe  string
+	Health string
 }
 type Backends map[string]HealthStatus
 type Servers map[string]Backends
@@ -38,15 +37,23 @@ func GetHealth(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
 			go func(server string) {
 				// Decrement the counter when the goroutine completes.
 				defer wg.Done()
-				backends := Backends{}
-				backends = StatusHealth(server, s.Secret, backend)
-				servers[server] = backends
+				servers[server] = StatusHealth(server, s.Secret, backend)
 			}(server)
 		}
 		wg.Wait()
-		r.JSON(w, http.StatusOK, servers)
+		err := r.JSON(w, http.StatusOK, servers)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err = w.Write([]byte(err.Error()))
+			if err != nil {
+				log.Println(err)
+			}
+		}
 	} else {
-		w.Write([]byte("Service could not be found."))
+		_, err := w.Write([]byte("Service could not be found."))
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	}
 }
@@ -59,12 +66,18 @@ func PostHealth(w http.ResponseWriter, req *http.Request, ps httprouter.Params) 
 	err := decoder.Decode(&healthpost)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
+		_, err = w.Write([]byte(err.Error()))
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	}
 	if healthpost.Set_health == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Set_health is required"))
+		_, err = w.Write([]byte("Set_health is required"))
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	}
 	if s, ok := services[service]; ok {
@@ -83,10 +96,16 @@ func PostHealth(w http.ResponseWriter, req *http.Request, ps httprouter.Params) 
 			}(server)
 		}
 		wg.Wait()
-		r.JSON(w, http.StatusOK, messages)
+		err = r.JSON(w, http.StatusOK, messages)
+		if err != nil {
+			log.Println(err)
+		}
 	} else {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("Service could not be found."))
+		_, err = w.Write([]byte("Service could not be found."))
+		if err != nil {
+			log.Println(err)
+		}
 		return
 	}
 }
@@ -102,7 +121,11 @@ func UpdateHealth(server string, secret string, backend string, healthpost Healt
 	if err != nil {
 		log.Println(err)
 	}
-	conn.Write([]byte("backend.set_health " + backend + " " + healthpost.Set_health + "\n"))
+	_, err = conn.Write([]byte("backend.set_health " + backend + " " + healthpost.Set_health + "\n"))
+	if err != nil {
+		log.Printf("Could not write packet : %s", err.Error())
+		return err.Error()
+	}
 	// again, 64 bytes is enough for this.
 	byte_status := make([]byte, 64)
 	_, err = conn.Read(byte_status)
@@ -139,9 +162,13 @@ func StatusHealth(server string, secret string, backend string) Backends {
 		log.Println(err)
 	}
 	if backend == "" {
-		conn.Write([]byte("backend.list\n"))
+		_, err = conn.Write([]byte("backend.list\n"))
 	} else {
-		conn.Write([]byte("backend.list " + backend + "\n"))
+		_, err = conn.Write([]byte("backend.list " + backend + "\n"))
+	}
+	if err != nil {
+		log.Printf("Could not write packet : %s", err.Error())
+		return backends
 	}
 	byte_health := make([]byte, 2048)
 	n, err := conn.Read(byte_health)
@@ -151,14 +178,14 @@ func StatusHealth(server string, secret string, backend string) Backends {
 	}
 	status := string(byte_health[:n])
 	for _, line := range strings.Split(status, "\n") {
-		rp := regexp.MustCompile("^(\\S+\\))[\\s]+(\\S+)[\\s]+(\\S+)[\\s]+(.+)")
-		list := rp.FindStringSubmatch(line)
-		if len(list) > 0 {
-			hs := HealthStatus{}
-			hs.Refs = list[2]
-			hs.Admin = list[3]
-			hs.Probe = list[4]
-			backends[list[1]] = hs
+		list := strings.Fields(line)
+		if len(list) >= 4 && list[0] != "Backend" {
+			hs := HealthStatus{
+				Admin:  list[1],
+				Probe:  list[2],
+				Health: list[3],
+			}
+			backends[list[0]] = hs
 		}
 	}
 	return backends

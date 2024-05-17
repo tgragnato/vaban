@@ -3,16 +3,16 @@ package main
 
 import (
 	"flag"
-	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/codegangsta/negroni"
 	"github.com/julienschmidt/httprouter"
 	"github.com/pilu/xrequestid"
 	"github.com/thoas/stats"
 	"github.com/unrolled/render"
-	"gopkg.in/yaml.v1"
+	"gopkg.in/yaml.v3"
 )
 
 type Message struct {
@@ -42,7 +42,14 @@ func initialize() *negroni.Negroni {
 	router := httprouter.New()
 	router.GET("/", func(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
 		stats := vabanstats.Data()
-		r.JSON(w, http.StatusOK, stats)
+		err := r.JSON(w, http.StatusOK, stats)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err = w.Write([]byte(err.Error()))
+			if err != nil {
+				log.Println(err)
+			}
+		}
 	})
 	router.GET("/v1/services", GetServices)
 	router.GET("/v1/service/:service", GetService)
@@ -60,7 +67,7 @@ func main() {
 	port := flag.String("p", "4000", "Listen on this port. (default 4000)")
 	config := flag.String("f", "config.yml", "Path to config. (default config.yml)")
 	flag.Parse()
-	file, err := ioutil.ReadFile(*config)
+	file, err := os.ReadFile(*config)
 	if err != nil {
 		log.Fatal(err)
 	}

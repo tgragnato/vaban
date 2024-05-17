@@ -2,31 +2,22 @@
 
 *A quick and easy way to control clusters of Varnish Cache hosts using a RESTful JSON API.*
 
-[![Build Status](https://travis-ci.org/martensson/vaban.svg?branch=master)](https://travis-ci.org/martensson/vaban)
-
 Vaban is built in Go for high performance, concurrency and simplicity. Every request and every ban spawns its own lightweight thread.
-It supports Varnish 3.0.3 + 4, Authentication, Pattern-based/VCL-based banning, health status, enable/disable backends, and more stuff to come. 
+It supports Varnish 6/7+, Authentication, Pattern-based/VCL-based banning, health status, enable/disable backends, and more stuff to come.
 
 ## Getting Started
-
-### Installing from packages
-
-The easiest way to install Vaban is from packages.
-
-- Currently enabled for Ubuntu 14.04/12.04 and Debian 7.
-- Current packages available from [packager.io](https://packager.io/gh/martensson/vaban/)
 
 ### Installing from source
 
 #### Dependencies
 
 * Git
-* Go 1.4+
+* Go 1.22+
 
 #### Clone and Build locally:
 
 ``` sh
-git clone https://github.com/martensson/vaban.git
+git clone https://github.com/tgragnato/vaban.git
 cd vaban
 go build
 ```
@@ -56,28 +47,9 @@ service2:
 
 ### Running Vaban
 
-#### from source:
 ``` sh
 ./vaban -p 4000 -f /path/to/config.yml
 ```
-#### from packages:
-``` sh
-vaban run web
-```
-or
-``` sh
-vaban scale web=1
-service vaban start
-vaban logs
-```
-
-#### from Docker
-
-If you already have Docker install its really use to compile and run with two commands:
-
-    docker build -t vaban .
-    docker run -p 4000:4000 vaban
-
 
 **Make sure that the varnish admin interface is available on your hosts, listening on 0.0.0.0:6082**
 
@@ -128,10 +100,10 @@ Check health status of all backends:
 
         {
             "test01:6082": {
-                "backend01(10.160.101.100,,80)": {
-                    "Refs": "1",
+                "boot.be01": {
                     "Admin": "probe",
-                    "Probe": "Healthy 4/4"
+                    "Probe": "4/4",
+                    "Health": "healthy",
                 }
             }
         }
@@ -147,9 +119,9 @@ Check health status of one backend:
         {
             "test01:6082": {
                 "backend01(10.160.101.100,,80)": {
-                    "Refs": "1",
                     "Admin": "probe",
-                    "Probe": "Healthy 3/4"
+                    "Probe": "3/4",
+                    "Health": "Healthy",
                 }
             }
         }
@@ -193,4 +165,3 @@ To ban elements in your cache.
                 "Msg": "ban status 200 0"
             }
         }
-
