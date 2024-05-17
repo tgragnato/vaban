@@ -1,0 +1,19 @@
+image: golang:latest
+
+stages:
+  - build
+  - test
+
+compile:
+  stage: build
+  script:
+    - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build .
+  artifacts:
+    paths:
+      - vaban
+    expire_in: 1 year
+
+sast:
+  stage: test
+include:
+- template: Security/SAST.gitlab-ci.yml
