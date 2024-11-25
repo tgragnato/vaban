@@ -37,6 +37,13 @@ func PostBan(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
 			log.Println(err)
 		}
 		return
+	} else if banpost.Pattern[0] != '/' {
+		w.WriteHeader(http.StatusBadRequest)
+		_, err = w.Write([]byte("Pattern must start with a /"))
+		if err != nil {
+			log.Println(err)
+		}
+		return
 	} else if banpost.Pattern != "" && banpost.Vcl != "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_, err = w.Write([]byte("Pattern or VCL is required, not both"))
