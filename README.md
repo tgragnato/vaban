@@ -152,7 +152,11 @@ To ban elements in your cache.
         
 + Request Ban all css files (application/json)
 
-        {"Pattern":".*css"}
+        {"Pattern":"/.*css"}
+
++ Request Ban everything (application/json)
+
+        {"Pattern":"/.*"}
         
 + Request Ban based on VCL, in this case all objects matching a host-header. (application/json)
 
