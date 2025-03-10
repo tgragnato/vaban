@@ -1,6 +1,6 @@
 module github.com/tgragnato/vaban
 
-go 1.22.3
+go 1.24.0
 
 require (
 	github.com/codegangsta/negroni v1.0.0
