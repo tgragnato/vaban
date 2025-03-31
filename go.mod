@@ -1,7 +1,6 @@
 module github.com/tgragnato/vaban
 
 go 1.24.0
-
 require (
 	github.com/codegangsta/negroni v1.0.0
 	github.com/julienschmidt/httprouter v1.3.0
@@ -14,6 +13,6 @@ require (
 
 require (
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
-	golang.org/x/net v0.37.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 )
