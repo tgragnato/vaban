@@ -3,6 +3,7 @@ image: golang:latest
 stages:
   - build
   - test
+  - publish
 
 compile:
   stage: build
@@ -17,3 +18,20 @@ sast:
   stage: test
 include:
 - template: Security/SAST.gitlab-ci.yml
+
+publish_generic_package:
+  stage: publish
+  dependencies:
+    - compile
+  variables:
+    PACKAGE_NAME: "vaban"
+    PACKAGE_VERSION: "latest"
+  script:
+    - |
+      echo "Uploading vaban as package $PACKAGE_NAME/$PACKAGE_VERSION"
+      curl --fail --show-error --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file vaban \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$PACKAGE_VERSION/vaban"
+  only:
+    - main
+  when: on_success
+  artifacts: {}
