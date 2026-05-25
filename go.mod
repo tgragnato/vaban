@@ -14,6 +14,6 @@ require (
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	golang.org/x/net v0.54.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 )
