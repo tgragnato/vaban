@@ -7,40 +7,38 @@ import (
 	"github.com/julienschmidt/httprouter"
 )
 
-func GetService(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
-	service := ps.ByName("service")
+func (appState *application) GetService(
+	responseWriter http.ResponseWriter,
+	req *http.Request,
+	params httprouter.Params,
+) {
+	service := params.ByName("service")
 
-	if s, ok := services[service]; ok {
-		err := r.JSON(w, http.StatusOK, s.Hosts)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, err = w.Write([]byte(err.Error()))
-			if err != nil {
-				log.Println(err)
-			}
-		}
-		return
-	} else {
-		w.WriteHeader(http.StatusNotFound)
-		_, err := w.Write([]byte("Service could not be found."))
-		if err != nil {
-			log.Println(err)
-		}
+	serviceConfig, ok := appState.services[service]
+	if !ok {
+		writePlainError(responseWriter, http.StatusNotFound, "Service could not be found.")
+
 		return
 	}
+
+	err := appState.renderer.JSON(responseWriter, http.StatusOK, serviceConfig.Hosts)
+	if err != nil {
+		writePlainError(responseWriter, http.StatusInternalServerError, err.Error())
+		log.Println(err)
+	}
+
+	_ = req
 }
 
-func GetServices(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
-	var keys []string
-	for k := range services {
-		keys = append(keys, k)
+func (appState *application) GetServices(responseWriter http.ResponseWriter, _ *http.Request, _ httprouter.Params) {
+	groups := make([]string, 0, len(appState.services))
+	for group := range appState.services {
+		groups = append(groups, group)
 	}
-	err := r.JSON(w, http.StatusOK, keys)
+
+	err := appState.renderer.JSON(responseWriter, http.StatusOK, groups)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, err = w.Write([]byte(err.Error()))
-		if err != nil {
-			log.Println(err)
-		}
+		writePlainError(responseWriter, http.StatusInternalServerError, err.Error())
+		log.Println(err)
 	}
 }

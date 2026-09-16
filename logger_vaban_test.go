@@ -1,40 +1,48 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
+const testHostA = "a:6082"
+
 func TestNewLoggerDefaults(t *testing.T) {
 	t.Parallel()
 
-	m := NewLogger()
-	if m == nil || m.Logger == nil {
+	middleware := NewLogger()
+	if middleware == nil || middleware.Logger == nil {
 		t.Fatal("expected logger middleware to be initialized")
 	}
-	if m.Name != "vaban" {
-		t.Fatalf("unexpected logger name: %q", m.Name)
+
+	if middleware.Name != "vaban" {
+		t.Fatalf("unexpected logger name: %q", middleware.Name)
 	}
 }
 
 func TestInitializeRootAndServicesRoutes(t *testing.T) {
-	withServices(t, Services{
-		"group1": {Hosts: []string{"a:6082"}},
+	t.Parallel()
+
+	appState := newTestApplication(Services{
+		testGroup1: {Hosts: []string{testHostA}, Secret: ""},
 	})
 
-	n := initialize()
+	app := appState.initialize()
 
-	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", http.NoBody)
 	rootRec := httptest.NewRecorder()
-	n.ServeHTTP(rootRec, rootReq)
+	app.ServeHTTP(rootRec, rootReq)
+
 	if rootRec.Code != http.StatusOK {
 		t.Fatalf("expected status 200 on root route, got %d", rootRec.Code)
 	}
 
-	svcReq := httptest.NewRequest(http.MethodGet, "/v1/services", nil)
+	svcReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/services", http.NoBody)
 	svcRec := httptest.NewRecorder()
-	n.ServeHTTP(svcRec, svcReq)
+	app.ServeHTTP(svcRec, svcReq)
+
 	if svcRec.Code != http.StatusOK {
 		t.Fatalf("expected status 200 on services route, got %d", svcRec.Code)
 	}

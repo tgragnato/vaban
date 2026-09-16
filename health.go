@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -10,6 +12,11 @@ import (
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	healthStatusBufferSize = 64
+	healthReadBufferSize   = 2048
 )
 
 type HealthStatus struct {
@@ -21,172 +28,265 @@ type Backends map[string]HealthStatus
 type Servers map[string]Backends
 
 type HealthPost struct {
-	Set_health string
+	SetHealth string `json:"setHealth"`
 }
 
-func GetHealth(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
-	service := ps.ByName("service")
-	backend := ps.ByName("backend")
-	if s, ok := services[service]; ok {
-		// We need the WaitGroup for some awesome Go concurrency
-		var wg sync.WaitGroup
-		servers := Servers{}
-		for _, server := range s.Hosts {
-			// Increment the WaitGroup counter.
-			wg.Add(1)
-			go func(server string) {
-				// Decrement the counter when the goroutine completes.
-				defer wg.Done()
-				servers[server] = StatusHealth(server, s.Secret, backend)
-			}(server)
-		}
-		wg.Wait()
-		err := r.JSON(w, http.StatusOK, servers)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, err = w.Write([]byte(err.Error()))
-			if err != nil {
-				log.Println(err)
-			}
-		}
-	} else {
-		_, err := w.Write([]byte("Service could not be found."))
-		if err != nil {
-			log.Println(err)
-		}
-		return
-	}
-}
+func (healthPost *HealthPost) UnmarshalJSON(data []byte) error {
+	decoded := map[string]string{}
 
-func PostHealth(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
-	service := ps.ByName("service")
-	backend := ps.ByName("backend")
-	healthpost := HealthPost{}
-	decoder := json.NewDecoder(req.Body)
-	err := decoder.Decode(&healthpost)
+	err := json.Unmarshal(data, &decoded)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, err = w.Write([]byte(err.Error()))
+		return fmt.Errorf("decode health post: %w", err)
+	}
+
+	healthPost.SetHealth = decoded["setHealth"]
+	if healthPost.SetHealth == "" {
+		healthPost.SetHealth = decoded["Set_health"]
+	}
+
+	return nil
+}
+
+func collectHealthStatuses(ctx context.Context, serviceConfig Service, backend string) Servers {
+	var (
+		waitGroup    sync.WaitGroup
+		serversMutex sync.Mutex
+	)
+
+	servers := Servers{}
+
+	for _, server := range serviceConfig.Hosts {
+		waitGroup.Add(1)
+
+		go func(server string) {
+			defer waitGroup.Done()
+
+			status := StatusHealth(ctx, server, serviceConfig.Secret, backend)
+
+			serversMutex.Lock()
+			servers[server] = status
+			serversMutex.Unlock()
+		}(server)
+	}
+
+	waitGroup.Wait()
+
+	return servers
+}
+
+func collectHealthUpdates(
+	ctx context.Context,
+	serviceConfig Service,
+	backend string,
+	healthPost HealthPost,
+	req *http.Request,
+) Messages {
+	var (
+		waitGroup     sync.WaitGroup
+		messagesMutex sync.Mutex
+	)
+
+	messages := Messages{}
+
+	for _, server := range serviceConfig.Hosts {
+		waitGroup.Add(1)
+
+		go func(server string) {
+			defer waitGroup.Done()
+
+			message := Message{Msg: UpdateHealth(ctx, server, serviceConfig.Secret, backend, healthPost, req)}
+
+			messagesMutex.Lock()
+			messages[server] = message
+			messagesMutex.Unlock()
+		}(server)
+	}
+
+	waitGroup.Wait()
+
+	return messages
+}
+
+func (appState *application) GetHealth(
+	responseWriter http.ResponseWriter,
+	req *http.Request,
+	params httprouter.Params,
+) {
+	service := params.ByName("service")
+	backend := params.ByName("backend")
+
+	serviceConfig, ok := appState.services[service]
+	if !ok {
+		_, err := responseWriter.Write([]byte("Service could not be found."))
 		if err != nil {
 			log.Println(err)
 		}
+
 		return
 	}
-	if healthpost.Set_health == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_, err = w.Write([]byte("Set_health is required"))
-		if err != nil {
-			log.Println(err)
-		}
-		return
-	}
-	if s, ok := services[service]; ok {
-		// We need the WaitGroup for some awesome Go concurrency
-		var wg sync.WaitGroup
-		messages := Messages{}
-		for _, server := range s.Hosts {
-			// Increment the WaitGroup counter.
-			wg.Add(1)
-			go func(server string) {
-				// Decrement the counter when the goroutine completes.
-				defer wg.Done()
-				message := Message{}
-				message.Msg = UpdateHealth(server, s.Secret, backend, healthpost, req)
-				messages[server] = message
-			}(server)
-		}
-		wg.Wait()
-		err = r.JSON(w, http.StatusOK, messages)
-		if err != nil {
-			log.Println(err)
-		}
-	} else {
-		w.WriteHeader(http.StatusNotFound)
-		_, err = w.Write([]byte("Service could not be found."))
-		if err != nil {
-			log.Println(err)
-		}
-		return
+
+	servers := collectHealthStatuses(req.Context(), serviceConfig, backend)
+
+	err := appState.renderer.JSON(responseWriter, http.StatusOK, servers)
+	if err != nil {
+		writePlainError(responseWriter, http.StatusInternalServerError, err.Error())
 	}
 }
 
-func UpdateHealth(server string, secret string, backend string, healthpost HealthPost, req *http.Request) string {
-	conn, err := net.Dial("tcp", server)
+func (appState *application) PostHealth(
+	responseWriter http.ResponseWriter,
+	req *http.Request,
+	params httprouter.Params,
+) {
+	service := params.ByName("service")
+	backend := params.ByName("backend")
+	healthPost := HealthPost{SetHealth: ""}
+	decoder := json.NewDecoder(req.Body)
+
+	err := decoder.Decode(&healthPost)
+	if err != nil {
+		writePlainError(responseWriter, http.StatusInternalServerError, err.Error())
+
+		return
+	}
+
+	if healthPost.SetHealth == "" {
+		writePlainError(responseWriter, http.StatusBadRequest, "Set_health is required")
+
+		return
+	}
+
+	serviceConfig, ok := appState.services[service]
+	if !ok {
+		writePlainError(responseWriter, http.StatusNotFound, "Service could not be found.")
+
+		return
+	}
+
+	messages := collectHealthUpdates(req.Context(), serviceConfig, backend, healthPost, req)
+
+	err = appState.renderer.JSON(responseWriter, http.StatusOK, messages)
 	if err != nil {
 		log.Println(err)
+	}
+}
+
+func UpdateHealth(
+	ctx context.Context,
+	server, secret, backend string,
+	healthPost HealthPost,
+	req *http.Request,
+) string {
+	var dialer net.Dialer
+
+	conn, err := dialer.DialContext(ctx, "tcp", server)
+	if err != nil {
+		log.Println(err)
+
 		return err.Error()
 	}
-	defer conn.Close()
+
+	defer func() {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			log.Println(closeErr)
+		}
+	}()
+
 	err = varnishAuth(server, secret, conn)
 	if err != nil {
 		log.Println(err)
 	}
-	_, err = conn.Write([]byte("backend.set_health " + backend + " " + healthpost.Set_health + "\n"))
+
+	_, err = conn.Write([]byte("backend.set_health " + backend + " " + healthPost.SetHealth + "\n"))
 	if err != nil {
 		log.Printf("Could not write packet : %s", err.Error())
+
 		return err.Error()
 	}
-	// again, 64 bytes is enough for this.
-	byte_status := make([]byte, 64)
-	_, err = conn.Read(byte_status)
+
+	statusBytes := make([]byte, healthStatusBufferSize)
+
+	_, err = conn.Read(statusBytes)
 	if err != nil {
 		log.Printf("Could not read packet : %s", err.Error())
+
 		return err.Error()
 	}
-	// cast byte to string and only keep the status code (always max 13 char), the rest we dont care.
-	status := string(byte_status)[0:12]
-	status = strings.Trim(status, " ")
+
+	status := strings.Trim(string(statusBytes)[0:12], " ")
+
 	entry := logrus.WithFields(logrus.Fields{
-		"set_health": healthpost.Set_health,
+		"set_health": healthPost.SetHealth,
 		"backend":    backend,
 		"server":     server,
 		"status":     status,
 	})
-	if reqID := req.Header.Get("X-Request-Id"); reqID != "" {
+	if reqID := req.Header.Get("X-Request-ID"); reqID != "" {
 		entry = entry.WithField("request_id", reqID)
 	}
+
 	entry.Info("health")
+
 	return "updated with status " + status
 }
 
-func StatusHealth(server string, secret string, backend string) Backends {
+func StatusHealth(ctx context.Context, server, secret, backend string) Backends {
 	backends := Backends{}
-	conn, err := net.Dial("tcp", server)
+
+	var dialer net.Dialer
+
+	conn, err := dialer.DialContext(ctx, "tcp", server)
 	if err != nil {
 		log.Println(err)
+
 		return backends
 	}
-	defer conn.Close()
+	defer func() {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			log.Println(closeErr)
+		}
+	}()
+
 	err = varnishAuth(server, secret, conn)
 	if err != nil {
 		log.Println(err)
 	}
+
 	if backend == "" {
 		_, err = conn.Write([]byte("backend.list\n"))
 	} else {
 		_, err = conn.Write([]byte("backend.list " + backend + "\n"))
 	}
+
 	if err != nil {
 		log.Printf("Could not write packet : %s", err.Error())
+
 		return backends
 	}
-	byte_health := make([]byte, 2048)
-	n, err := conn.Read(byte_health)
+
+	byteHealth := make([]byte, healthReadBufferSize)
+
+	bytesRead, err := conn.Read(byteHealth)
 	if err != nil {
 		log.Printf("Could not read packet : %s", err.Error())
+
 		return backends
 	}
-	status := string(byte_health[:n])
+
+	status := string(byteHealth[:bytesRead])
 	for line := range strings.SplitSeq(status, "\n") {
-		list := strings.Fields(line)
-		if len(list) >= 4 && list[0] != "Backend" {
+		fields := strings.Fields(line)
+		if len(fields) >= 4 && fields[0] != "Backend" {
 			hs := HealthStatus{
-				Admin:  list[1],
-				Probe:  list[2],
-				Health: list[3],
+				Admin:  fields[1],
+				Probe:  fields[2],
+				Health: fields[3],
 			}
-			backends[list[0]] = hs
+			backends[fields[0]] = hs
 		}
 	}
+
 	return backends
 }

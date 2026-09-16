@@ -57,6 +57,14 @@ service2:
 
 A quick and easy way to control clusters of Varnish Cache hosts using a RESTful JSON API.
 
+JSON request payloads now prefer lowercase camel-case keys:
+
+* `pattern`
+* `vcl`
+* `setHealth`
+
+For backward compatibility, Vaban still accepts the legacy keys `Pattern`, `Vcl` and `Set_health`.
+
 #### GET /v1/services
 
 Get all groups:
@@ -132,7 +140,11 @@ force health status of one backend (can be healthy, sick or auto):
 
 + Request (application/json)
 
-        {"Set_health":"sick"}
+    {"setHealth":"sick"}
+
++ Legacy Request (application/json)
+
+    {"Set_health":"sick"}
 
 + Response 200 (application/json)
 
@@ -148,19 +160,27 @@ To ban elements in your cache.
 
 + Request Ban the root of your website (application/json)
 
-        {"Pattern":"/"}
+    {"pattern":"/"}
         
 + Request Ban all css files (application/json)
 
-        {"Pattern":"/.*css"}
+    {"pattern":"/.*css"}
 
 + Request Ban everything (application/json)
 
-        {"Pattern":"/.*"}
+    {"pattern":"/.*"}
         
 + Request Ban based on VCL, in this case all objects matching a host-header. (application/json)
 
-        {"Vcl":"req.http.Host == 'example.com'"}"}
+    {"vcl":"req.http.Host == 'example.com'"}
+
++ Legacy Request (application/json)
+
+    {"Pattern":"/"}
+
++ Legacy Request based on VCL (application/json)
+
+    {"Vcl":"req.http.Host == 'example.com'"}
 
 + Response 200 (application/json)
 

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -12,119 +14,184 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const bannerStatusBufferSize = 64
+
 type BanPost struct {
-	Pattern string
-	Vcl     string
+	Pattern string `json:"pattern"`
+	Vcl     string `json:"vcl"`
 }
 
-func PostBan(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
-	service := ps.ByName("service")
-	banpost := BanPost{}
-	decoder := json.NewDecoder(req.Body)
-	err := decoder.Decode(&banpost)
+func (banPost *BanPost) UnmarshalJSON(data []byte) error {
+	decoded := map[string]string{}
+
+	err := json.Unmarshal(data, &decoded)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, err = w.Write([]byte(err.Error()))
-		if err != nil {
-			log.Println(err)
-		}
-		return
+		return fmt.Errorf("decode ban post: %w", err)
 	}
-	if banpost.Pattern == "" && banpost.Vcl == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_, err = w.Write([]byte("Pattern or VCL is required"))
-		if err != nil {
-			log.Println(err)
-		}
-		return
-	} else if banpost.Pattern[0] != '/' {
-		w.WriteHeader(http.StatusBadRequest)
-		_, err = w.Write([]byte("Pattern must start with a /"))
-		if err != nil {
-			log.Println(err)
-		}
-		return
-	} else if banpost.Pattern != "" && banpost.Vcl != "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_, err = w.Write([]byte("Pattern or VCL is required, not both"))
-		if err != nil {
-			log.Println(err)
-		}
-		return
+
+	banPost.Pattern = decoded["pattern"]
+	if banPost.Pattern == "" {
+		banPost.Pattern = decoded["Pattern"]
 	}
-	if s, ok := services[service]; ok {
-		// We need the WaitGroup for some awesome Go concurrency of our BANs
-		var wg sync.WaitGroup
-		messages := Messages{}
-		for _, server := range s.Hosts {
-			// Increment the WaitGroup counter.
-			wg.Add(1)
-			go func(server string) {
-				// Decrement the counter when the goroutine completes.
-				defer wg.Done()
-				message := Message{}
-				message.Msg = Banner(server, banpost, s.Secret, req)
-				messages[server] = message
-			}(server)
-		}
-		// Wait for all BANs to complete.
-		wg.Wait()
-		err = r.JSON(w, http.StatusOK, messages)
-		if err != nil {
-			log.Println(err)
-		}
-		return
-	} else {
-		w.WriteHeader(http.StatusNotFound)
-		_, err = w.Write([]byte("Service could not be found."))
-		if err != nil {
-			log.Println(err)
-		}
-		return
+
+	banPost.Vcl = decoded["vcl"]
+	if banPost.Vcl == "" {
+		banPost.Vcl = decoded["Vcl"]
 	}
+
+	return nil
 }
 
-func Banner(server string, banpost BanPost, secret string, req *http.Request) string {
-	conn, err := net.Dial("tcp", server)
+type banValidationResult struct {
+	message    string
+	statusCode int
+}
+
+func writePlainError(responseWriter http.ResponseWriter, statusCode int, message string) {
+	responseWriter.WriteHeader(statusCode)
+
+	_, err := responseWriter.Write([]byte(message))
 	if err != nil {
 		log.Println(err)
+	}
+}
+
+func validateBanPost(banPost BanPost) banValidationResult {
+	if banPost.Pattern == "" && banPost.Vcl == "" {
+		return banValidationResult{message: "Pattern or VCL is required", statusCode: http.StatusBadRequest}
+	}
+
+	if banPost.Pattern != "" && banPost.Pattern[0] != '/' {
+		return banValidationResult{message: "Pattern must start with a /", statusCode: http.StatusBadRequest}
+	}
+
+	if banPost.Pattern != "" && banPost.Vcl != "" {
+		return banValidationResult{message: "Pattern or VCL is required, not both", statusCode: http.StatusBadRequest}
+	}
+
+	return banValidationResult{message: "", statusCode: 0}
+}
+
+func collectBanMessages(ctx context.Context, serviceConfig Service, banPost BanPost, req *http.Request) Messages {
+	var (
+		waitGroup     sync.WaitGroup
+		messagesMutex sync.Mutex
+	)
+
+	messages := Messages{}
+
+	for _, server := range serviceConfig.Hosts {
+		waitGroup.Add(1)
+
+		go func(server string) {
+			defer waitGroup.Done()
+
+			message := Message{Msg: Banner(ctx, server, banPost, serviceConfig.Secret, req)}
+
+			messagesMutex.Lock()
+			messages[server] = message
+			messagesMutex.Unlock()
+		}(server)
+	}
+
+	waitGroup.Wait()
+
+	return messages
+}
+
+func (appState *application) PostBan(responseWriter http.ResponseWriter, req *http.Request, params httprouter.Params) {
+	service := params.ByName("service")
+
+	serviceConfig, ok := appState.services[service]
+	if !ok {
+		writePlainError(responseWriter, http.StatusNotFound, "Service could not be found.")
+
+		return
+	}
+
+	banPost := BanPost{Pattern: "", Vcl: ""}
+	decoder := json.NewDecoder(req.Body)
+
+	err := decoder.Decode(&banPost)
+	if err != nil {
+		writePlainError(responseWriter, http.StatusInternalServerError, err.Error())
+
+		return
+	}
+
+	validation := validateBanPost(banPost)
+	if validation.message != "" {
+		writePlainError(responseWriter, validation.statusCode, validation.message)
+
+		return
+	}
+
+	messages := collectBanMessages(req.Context(), serviceConfig, banPost, req)
+
+	err = appState.renderer.JSON(responseWriter, http.StatusOK, messages)
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func Banner(ctx context.Context, server string, banPost BanPost, secret string, req *http.Request) string {
+	var dialer net.Dialer
+
+	conn, err := dialer.DialContext(ctx, "tcp", server)
+	if err != nil {
+		log.Println(err)
+
 		return err.Error()
 	}
-	defer conn.Close()
+
+	defer func() {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			log.Println(closeErr)
+		}
+	}()
+
 	err = varnishAuth(server, secret, conn)
 	if err != nil {
 		log.Printf("Authentication error : %s", err.Error())
+
 		return err.Error()
 	}
-	// sending the magic ban commmand to varnish.
-	if banpost.Pattern != "" {
-		_, err = conn.Write([]byte("ban req.url ~ " + banpost.Pattern + "$\n"))
+
+	if banPost.Pattern != "" {
+		_, err = conn.Write([]byte("ban req.url ~ " + banPost.Pattern + "$\n"))
 	} else {
-		_, err = conn.Write([]byte("ban " + banpost.Vcl + "\n"))
+		_, err = conn.Write([]byte("ban " + banPost.Vcl + "\n"))
 	}
+
 	if err != nil {
 		log.Printf("Could not write packet : %s", err.Error())
+
 		return err.Error()
 	}
-	// again, 64 bytes is enough for this.
-	byte_status := make([]byte, 64)
-	_, err = conn.Read(byte_status)
+
+	statusBytes := make([]byte, bannerStatusBufferSize)
+
+	_, err = conn.Read(statusBytes)
 	if err != nil {
 		log.Printf("Could not read packet : %s", err.Error())
+
 		return err.Error()
 	}
-	// cast byte to string and only keep the status code (always max 13 char), the rest we dont care.
-	status := string(byte_status)[0:12]
-	status = strings.Trim(status, " ")
+
+	status := strings.Trim(string(statusBytes)[0:12], " ")
+
 	entry := logrus.WithFields(logrus.Fields{
-		"vcl":     banpost.Vcl,
-		"pattern": banpost.Pattern,
+		"vcl":     banPost.Vcl,
+		"pattern": banPost.Pattern,
 		"server":  server,
 		"status":  status,
 	})
-	if reqID := req.Header.Get("X-Request-Id"); reqID != "" {
+	if reqID := req.Header.Get("X-Request-ID"); reqID != "" {
 		entry = entry.WithField("request_id", reqID)
 	}
+
 	entry.Info("ban")
+
 	return "ban status " + status
 }

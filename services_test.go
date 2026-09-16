@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,62 +11,74 @@ import (
 )
 
 func TestGetServiceFound(t *testing.T) {
-	withServices(t, Services{
-		"group1": {Hosts: []string{"a:6082", "b:6082"}},
+	t.Parallel()
+
+	appState := newTestApplication(Services{
+		testGroup1: {Hosts: []string{"a:6082", "b:6082"}, Secret: ""},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/service/group1", nil)
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{{Key: "service", Value: "group1"}}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/service/group1", http.NoBody)
+	responseRecorder := httptest.NewRecorder()
+	ps := httprouter.Params{{Key: testServiceKey, Value: testGroup1}}
 
-	GetService(rr, req, ps)
+	appState.GetService(responseRecorder, req, ps)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rr.Code)
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", responseRecorder.Code)
 	}
 
 	var hosts []string
-	if err := json.Unmarshal(rr.Body.Bytes(), &hosts); err != nil {
+
+	err := json.Unmarshal(responseRecorder.Body.Bytes(), &hosts)
+	if err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
+
 	if len(hosts) != 2 {
 		t.Fatalf("expected 2 hosts, got %d", len(hosts))
 	}
 }
 
 func TestGetServiceNotFound(t *testing.T) {
-	withServices(t, Services{})
+	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/service/missing", nil)
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{{Key: "service", Value: "missing"}}
+	appState := newTestApplication(Services{})
 
-	GetService(rr, req, ps)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/service/missing", http.NoBody)
+	responseRecorder := httptest.NewRecorder()
+	ps := httprouter.Params{{Key: testServiceKey, Value: testMissing}}
 
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", rr.Code)
+	appState.GetService(responseRecorder, req, ps)
+
+	if responseRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", responseRecorder.Code)
 	}
 }
 
 func TestGetServices(t *testing.T) {
-	withServices(t, Services{
-		"group1": {Hosts: []string{"a:6082"}},
-		"group2": {Hosts: []string{"b:6082"}},
+	t.Parallel()
+
+	appState := newTestApplication(Services{
+		testGroup1: {Hosts: []string{"a:6082"}, Secret: ""},
+		"group2":   {Hosts: []string{"b:6082"}, Secret: ""},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/services", nil)
-	rr := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/services", http.NoBody)
+	responseRecorder := httptest.NewRecorder()
 
-	GetServices(rr, req, nil)
+	appState.GetServices(responseRecorder, req, nil)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rr.Code)
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", responseRecorder.Code)
 	}
 
 	var groups []string
-	if err := json.Unmarshal(rr.Body.Bytes(), &groups); err != nil {
+
+	err := json.Unmarshal(responseRecorder.Body.Bytes(), &groups)
+	if err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
+
 	if len(groups) != 2 {
 		t.Fatalf("expected 2 groups, got %d", len(groups))
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,9 @@ import (
 )
 
 func TestPostBanValidationErrors(t *testing.T) {
-	withServices(t, Services{"group1": {Hosts: []string{"127.0.0.1:1"}}})
+	t.Parallel()
+
+	appState := newTestApplication(Services{testGroup1: {Hosts: []string{testClosedAddr}, Secret: ""}})
 
 	tests := []struct {
 		name       string
@@ -45,84 +48,112 @@ func TestPostBanValidationErrors(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/ban", strings.NewReader(tc.body))
-			rr := httptest.NewRecorder()
-			ps := httprouter.Params{{Key: "service", Value: "group1"}}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 
-			PostBan(rr, req, ps)
+			req := httptest.NewRequestWithContext(
+				context.Background(),
+				http.MethodPost,
+				"/v1/service/group1/ban",
+				strings.NewReader(testCase.body),
+			)
+			responseRecorder := httptest.NewRecorder()
+			ps := httprouter.Params{{Key: testServiceKey, Value: testGroup1}}
 
-			if rr.Code != tc.wantStatus {
-				t.Fatalf("expected status %d, got %d", tc.wantStatus, rr.Code)
+			appState.PostBan(responseRecorder, req, ps)
+
+			if responseRecorder.Code != testCase.wantStatus {
+				t.Fatalf("expected status %d, got %d", testCase.wantStatus, responseRecorder.Code)
 			}
-			if !strings.Contains(rr.Body.String(), tc.wantBody) {
-				t.Fatalf("expected body to contain %q, got %q", tc.wantBody, rr.Body.String())
+
+			if !strings.Contains(responseRecorder.Body.String(), testCase.wantBody) {
+				t.Fatalf("expected body to contain %q, got %q", testCase.wantBody, responseRecorder.Body.String())
 			}
 		})
 	}
 }
 
 func TestPostBanServiceNotFound(t *testing.T) {
-	withServices(t, Services{})
+	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/missing/ban", strings.NewReader(`{"Pattern":"/"}`))
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{{Key: "service", Value: "missing"}}
+	appState := newTestApplication(Services{})
 
-	PostBan(rr, req, ps)
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/missing/ban",
+		strings.NewReader(`{"Pattern":"/"}`),
+	)
+	responseRecorder := httptest.NewRecorder()
+	ps := httprouter.Params{{Key: testServiceKey, Value: testMissing}}
 
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", rr.Code)
+	appState.PostBan(responseRecorder, req, ps)
+
+	if responseRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", responseRecorder.Code)
 	}
 }
 
 func TestBannerSuccessWithPattern(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
+	server := startFakeAdminServer(t, func(cmd string) string {
 		if cmd == "ban req.url ~ /foo$" {
-			return "200 0       \n"
+			return testOKResponse
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/ban", nil)
-	msg := Banner(addr, BanPost{Pattern: "/foo"}, "secret", req)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/service/group1/ban", http.NoBody)
+
+	msg := Banner(context.Background(), server.address, BanPost{Pattern: "/foo", Vcl: ""}, testSecret, req)
 	if !strings.Contains(msg, "ban status 200 0") {
 		t.Fatalf("unexpected banner reply: %q", msg)
 	}
 }
 
 func TestPostBanSuccess(t *testing.T) {
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
+	t.Parallel()
+
+	server := startFakeAdminServer(t, func(cmd string) string {
 		if cmd == "ban req.url ~ /$" {
-			return "200 0       \n"
+			return testOKResponse
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	withServices(t, Services{
-		"group1": {Hosts: []string{addr}, Secret: "secret"},
+	appState := newTestApplication(Services{
+		testGroup1: {Hosts: []string{server.address}, Secret: testSecret},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/ban", strings.NewReader(`{"Pattern":"/"}`))
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{{Key: "service", Value: "group1"}}
+	req := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/group1/ban",
+		strings.NewReader(`{"Pattern":"/"}`),
+	)
+	responseRecorder := httptest.NewRecorder()
+	ps := httprouter.Params{{Key: testServiceKey, Value: testGroup1}}
 
-	PostBan(rr, req, ps)
+	appState.PostBan(responseRecorder, req, ps)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rr.Code)
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", responseRecorder.Code)
 	}
 
 	var messages Messages
-	if err := json.Unmarshal(rr.Body.Bytes(), &messages); err != nil {
+
+	err := json.Unmarshal(responseRecorder.Body.Bytes(), &messages)
+	if err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if got, ok := messages[addr]; !ok || !strings.Contains(got.Msg, "ban status 200 0") {
+
+	if got, ok := messages[server.address]; !ok || !strings.Contains(got.Msg, "ban status 200 0") {
 		t.Fatalf("unexpected response payload: %#v", messages)
 	}
 }
@@ -130,16 +161,24 @@ func TestPostBanSuccess(t *testing.T) {
 func TestBannerSuccessWithVCL(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
+	server := startFakeAdminServer(t, func(cmd string) string {
 		if cmd == "ban req.http.host == \"example.com\"" {
-			return "200 0       \n"
+			return testOKResponse
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/ban", nil)
-	msg := Banner(addr, BanPost{Vcl: `req.http.host == "example.com"`}, "secret", req)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/service/group1/ban", http.NoBody)
+
+	msg := Banner(
+		context.Background(),
+		server.address,
+		BanPost{Pattern: "", Vcl: `req.http.host == "example.com"`},
+		testSecret,
+		req,
+	)
 	if !strings.Contains(msg, "ban status 200 0") {
 		t.Fatalf("unexpected banner reply: %q", msg)
 	}
@@ -148,8 +187,9 @@ func TestBannerSuccessWithVCL(t *testing.T) {
 func TestBannerDialError(t *testing.T) {
 	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/ban", nil)
-	msg := Banner("127.0.0.1:1", BanPost{Pattern: "/"}, "secret", req)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/service/group1/ban", http.NoBody)
+
+	msg := Banner(context.Background(), testClosedAddr, BanPost{Pattern: "/", Vcl: ""}, testSecret, req)
 	if msg == "" {
 		t.Fatal("expected non-empty error message")
 	}
@@ -158,11 +198,12 @@ func TestBannerDialError(t *testing.T) {
 func TestBannerAuthError(t *testing.T) {
 	t.Parallel()
 
-	lnAddr, lnCleanup := startFakeAdminServerNoChallenge(t)
-	defer lnCleanup()
+	server := startFakeAdminServerNoChallenge(t)
+	defer server.cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/ban", nil)
-	msg := Banner(lnAddr, BanPost{Pattern: "/"}, "secret", req)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/service/group1/ban", http.NoBody)
+
+	msg := Banner(context.Background(), server.address, BanPost{Pattern: "/", Vcl: ""}, testSecret, req)
 	if !strings.Contains(msg, "no challenge code") {
 		t.Fatalf("expected auth error, got %q", msg)
 	}
@@ -171,16 +212,18 @@ func TestBannerAuthError(t *testing.T) {
 func TestBannerReadErrorAfterCommand(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
+	server := startFakeAdminServer(t, func(cmd string) string {
 		if cmd == "ban req.url ~ /$" {
-			return "__CLOSE__"
+			return testCloseToken
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/ban", nil)
-	msg := Banner(addr, BanPost{Pattern: "/"}, "secret", req)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/service/group1/ban", http.NoBody)
+
+	msg := Banner(context.Background(), server.address, BanPost{Pattern: "/", Vcl: ""}, testSecret, req)
 	if msg == "" || strings.Contains(msg, "ban status") {
 		t.Fatalf("expected read error, got %q", msg)
 	}

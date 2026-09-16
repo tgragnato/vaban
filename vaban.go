@@ -26,56 +26,83 @@ type Service struct {
 }
 type Services map[string]Service
 
-var services Services
+type application struct {
+	services Services
+	renderer *render.Render
+}
 
-var r = render.New(render.Options{
-	IndentJSON: true,
-})
+func newApplication() *application {
+	var options render.Options
 
-func initialize() *negroni.Negroni {
-	vabanstats := stats.New()
-	n := negroni.New(
+	options.IndentJSON = true
+
+	return &application{
+		services: Services{},
+		renderer: render.New(options),
+	}
+}
+
+const requestIDLength = 8
+
+func (appState *application) initialize() *negroni.Negroni {
+	vabanStats := stats.New()
+	app := negroni.New(
 		negroni.NewRecovery(),
 		NewLogger(),
-		xrequestid.New(8),
+		xrequestid.New(requestIDLength),
 	)
+
 	router := httprouter.New()
-	router.GET("/", func(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
-		stats := vabanstats.Data()
-		err := r.JSON(w, http.StatusOK, stats)
+	router.GET("/", func(responseWriter http.ResponseWriter, req *http.Request, _ httprouter.Params) {
+		statsData := vabanStats.Data()
+
+		err := appState.renderer.JSON(responseWriter, http.StatusOK, statsData)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, err = w.Write([]byte(err.Error()))
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+
+			_, err = responseWriter.Write([]byte(err.Error()))
 			if err != nil {
 				log.Println(err)
 			}
 		}
 	})
-	router.GET("/v1/services", GetServices)
-	router.GET("/v1/service/:service", GetService)
-	router.GET("/v1/service/:service/ping", GetPing)
-	router.GET("/v1/service/:service/health", GetHealth)
-	router.GET("/v1/service/:service/health/:backend", GetHealth)
-	router.POST("/v1/service/:service/health/:backend", PostHealth)
-	router.POST("/v1/service/:service/ban", PostBan)
+	router.GET("/v1/services", appState.GetServices)
+	router.GET("/v1/service/:service", appState.GetService)
+	router.GET("/v1/service/:service/ping", appState.GetPing)
+	router.GET("/v1/service/:service/health", appState.GetHealth)
+	router.GET("/v1/service/:service/health/:backend", appState.GetHealth)
+	router.POST("/v1/service/:service/health/:backend", appState.PostHealth)
+	router.POST("/v1/service/:service/ban", appState.PostBan)
 	// add router and clear mux.context values at the end of request life-times
-	n.UseHandler(router)
-	return n
+	app.UseHandler(router)
+
+	return app
 }
 
 func main() {
 	port := flag.String("p", "4000", "Listen on this port. (default 4000)")
 	config := flag.String("f", "config.yml", "Path to config. (default config.yml)")
+
 	flag.Parse()
+
 	file, err := os.ReadFile(*config)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+
+		return
 	}
-	err = yaml.Unmarshal(file, &services)
+
+	appState := newApplication()
+
+	err = yaml.Unmarshal(file, &appState.services)
 	if err != nil {
-		log.Fatal("Problem parsing config: ", err)
+		log.Println("Problem parsing config: ", err)
+
+		return
 	}
-	n := initialize()
+
+	app := appState.initialize()
+
 	log.Println("Starting vaban on :" + *port)
-	n.Run(":" + *port)
+	app.Run(":" + *port)
 }

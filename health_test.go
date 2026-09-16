@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,197 +14,261 @@ import (
 func TestStatusHealthParsesBackendList(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
-		if cmd == "backend.list" {
+	server := startFakeAdminServer(t, func(cmd string) string {
+		if cmd == testBackendList {
 			return "Backend name Admin Probe Health\nboot.be1 probe 4/4 healthy\n"
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	backends := StatusHealth(addr, "secret", "")
+	backends := StatusHealth(context.Background(), server.address, testSecret, "")
 
-	hs, ok := backends["boot.be1"]
+	healthStatus, ok := backends["boot.be1"]
 	if !ok {
 		t.Fatalf("expected backend boot.be1, got %#v", backends)
 	}
-	if hs.Admin != "probe" || hs.Probe != "4/4" || hs.Health != "healthy" {
-		t.Fatalf("unexpected backend status: %#v", hs)
+
+	if healthStatus.Admin != "probe" || healthStatus.Probe != "4/4" || healthStatus.Health != "healthy" {
+		t.Fatalf("unexpected backend status: %#v", healthStatus)
 	}
 }
 
 func TestPostHealthRequiresSetHealth(t *testing.T) {
-	withServices(t, Services{"group1": {Hosts: []string{"127.0.0.1:1"}}})
+	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/health/be1", strings.NewReader(`{"Set_health":""}`))
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{
-		{Key: "service", Value: "group1"},
-		{Key: "backend", Value: "be1"},
-	}
+	appState := newTestApplication(Services{testGroup1: {Hosts: []string{testClosedAddr}, Secret: ""}})
 
-	PostHealth(rr, req, ps)
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/group1/health/be1",
+		strings.NewReader(`{"Set_health":""}`),
+	)
+	responseRecorder := httptest.NewRecorder()
+	params := httprouter.Params{{Key: testServiceKey, Value: testGroup1}, {Key: testBackendKey, Value: testBackendName}}
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected status 400, got %d", rr.Code)
+	appState.PostHealth(responseRecorder, request, params)
+
+	if responseRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", responseRecorder.Code)
 	}
 }
 
 func TestGetHealthSuccess(t *testing.T) {
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
-		if cmd == "backend.list" {
+	t.Parallel()
+
+	server := startFakeAdminServer(t, func(cmd string) string {
+		if cmd == testBackendList {
 			return "Backend name Admin Probe Health\nboot.be1 probe 4/4 healthy\n"
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	withServices(t, Services{
-		"group1": {Hosts: []string{addr}, Secret: "secret"},
-	})
+	appState := newTestApplication(Services{testGroup1: {Hosts: []string{server.address}, Secret: testSecret}})
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/service/group1/health", nil)
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{{Key: "service", Value: "group1"}}
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/v1/service/group1/health",
+		http.NoBody,
+	)
+	responseRecorder := httptest.NewRecorder()
+	params := httprouter.Params{{Key: testServiceKey, Value: testGroup1}}
 
-	GetHealth(rr, req, ps)
+	appState.GetHealth(responseRecorder, request, params)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rr.Code)
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", responseRecorder.Code)
 	}
 
 	var servers Servers
-	if err := json.Unmarshal(rr.Body.Bytes(), &servers); err != nil {
+
+	err := json.Unmarshal(responseRecorder.Body.Bytes(), &servers)
+	if err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if _, ok := servers[addr]["boot.be1"]; !ok {
-		t.Fatalf("expected backend result for host %s", addr)
+
+	if _, ok := servers[server.address]["boot.be1"]; !ok {
+		t.Fatalf("expected backend result for host %s", server.address)
 	}
 }
 
 func TestStatusHealthSpecificBackend(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
-		if cmd == "backend.list be1" {
+	server := startFakeAdminServer(t, func(cmd string) string {
+		if cmd == "backend.list " + testBackendName {
 			return "Backend name Admin Probe Health\nbe1 probe 3/4 healthy\n"
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	backends := StatusHealth(addr, "secret", "be1")
-	if _, ok := backends["be1"]; !ok {
+	backends := StatusHealth(context.Background(), server.address, testSecret, testBackendName)
+	if _, ok := backends[testBackendName]; !ok {
 		t.Fatalf("expected backend be1, got %#v", backends)
 	}
 }
 
 func TestGetHealthServiceNotFound(t *testing.T) {
-	withServices(t, Services{})
+	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/service/missing/health", nil)
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{{Key: "service", Value: "missing"}}
+	appState := newTestApplication(Services{})
 
-	GetHealth(rr, req, ps)
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"/v1/service/missing/health",
+		http.NoBody,
+	)
+	responseRecorder := httptest.NewRecorder()
+	params := httprouter.Params{{Key: testServiceKey, Value: testMissing}}
 
-	if !strings.Contains(rr.Body.String(), "Service could not be found.") {
-		t.Fatalf("unexpected body: %q", rr.Body.String())
+	appState.GetHealth(responseRecorder, request, params)
+
+	if !strings.Contains(responseRecorder.Body.String(), "Service could not be found.") {
+		t.Fatalf("unexpected body: %q", responseRecorder.Body.String())
 	}
 }
 
 func TestUpdateHealthSuccess(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
-		if cmd == "backend.set_health be1 sick" {
-			return "200 0       \n"
+	server := startFakeAdminServer(t, func(cmd string) string {
+		if cmd == "backend.set_health " + testBackendName + " " + testHealthSick {
+			return testOKResponse
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/health/be1", nil)
-	msg := UpdateHealth(addr, "secret", "be1", HealthPost{Set_health: "sick"}, req)
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/group1/health/be1",
+		http.NoBody,
+	)
+
+	msg := UpdateHealth(
+		context.Background(),
+		server.address,
+		testSecret,
+		testBackendName,
+		HealthPost{SetHealth: testHealthSick},
+		request,
+	)
 	if !strings.Contains(msg, "updated with status 200 0") {
 		t.Fatalf("unexpected update response: %q", msg)
 	}
 }
 
 func TestPostHealthInvalidJSON(t *testing.T) {
-	withServices(t, Services{"group1": {Hosts: []string{"127.0.0.1:1"}}})
+	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/health/be1", strings.NewReader("{"))
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{
-		{Key: "service", Value: "group1"},
-		{Key: "backend", Value: "be1"},
-	}
+	appState := newTestApplication(Services{testGroup1: {Hosts: []string{testClosedAddr}, Secret: ""}})
 
-	PostHealth(rr, req, ps)
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/group1/health/be1",
+		strings.NewReader("{"),
+	)
+	responseRecorder := httptest.NewRecorder()
+	params := httprouter.Params{{Key: testServiceKey, Value: testGroup1}, {Key: testBackendKey, Value: testBackendName}}
 
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status 500, got %d", rr.Code)
+	appState.PostHealth(responseRecorder, request, params)
+
+	if responseRecorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", responseRecorder.Code)
 	}
 }
 
 func TestPostHealthSuccess(t *testing.T) {
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
-		if cmd == "backend.set_health be1 healthy" {
-			return "200 0       \n"
+	t.Parallel()
+
+	server := startFakeAdminServer(t, func(cmd string) string {
+		if cmd == "backend.set_health " + testBackendName + " healthy" {
+			return testOKResponse
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	withServices(t, Services{
-		"group1": {Hosts: []string{addr}, Secret: "secret"},
-	})
+	appState := newTestApplication(Services{testGroup1: {Hosts: []string{server.address}, Secret: testSecret}})
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/health/be1", strings.NewReader(`{"Set_health":"healthy"}`))
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{
-		{Key: "service", Value: "group1"},
-		{Key: "backend", Value: "be1"},
-	}
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/group1/health/be1",
+		strings.NewReader(`{"Set_health":"healthy"}`),
+	)
+	responseRecorder := httptest.NewRecorder()
+	params := httprouter.Params{{Key: testServiceKey, Value: testGroup1}, {Key: testBackendKey, Value: testBackendName}}
 
-	PostHealth(rr, req, ps)
+	appState.PostHealth(responseRecorder, request, params)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rr.Code)
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", responseRecorder.Code)
 	}
 
 	var messages Messages
-	if err := json.Unmarshal(rr.Body.Bytes(), &messages); err != nil {
+
+	err := json.Unmarshal(responseRecorder.Body.Bytes(), &messages)
+	if err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if got, ok := messages[addr]; !ok || !strings.Contains(got.Msg, "updated with status 200 0") {
+
+	if got, ok := messages[server.address]; !ok || !strings.Contains(got.Msg, "updated with status 200 0") {
 		t.Fatalf("unexpected response payload: %#v", messages)
 	}
 }
 
 func TestPostHealthServiceNotFound(t *testing.T) {
-	withServices(t, Services{})
+	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/missing/health/be1", strings.NewReader(`{"Set_health":"sick"}`))
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{
-		{Key: "service", Value: "missing"},
-		{Key: "backend", Value: "be1"},
-	}
+	appState := newTestApplication(Services{})
 
-	PostHealth(rr, req, ps)
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/missing/health/be1",
+		strings.NewReader(`{"Set_health":"sick"}`),
+	)
+	responseRecorder := httptest.NewRecorder()
+	params := httprouter.Params{{Key: testServiceKey, Value: testMissing}, {Key: testBackendKey, Value: testBackendName}}
 
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", rr.Code)
+	appState.PostHealth(responseRecorder, request, params)
+
+	if responseRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", responseRecorder.Code)
 	}
 }
 
 func TestUpdateHealthDialError(t *testing.T) {
 	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/health/be1", nil)
-	msg := UpdateHealth("127.0.0.1:1", "secret", "be1", HealthPost{Set_health: "sick"}, req)
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/group1/health/be1",
+		http.NoBody,
+	)
+
+	msg := UpdateHealth(
+		context.Background(),
+		testClosedAddr,
+		testSecret,
+		testBackendName,
+		HealthPost{SetHealth: testHealthSick},
+		request,
+	)
 	if msg == "" {
 		t.Fatal("expected non-empty error message")
 	}
@@ -212,11 +277,24 @@ func TestUpdateHealthDialError(t *testing.T) {
 func TestUpdateHealthAuthError(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServerNoChallenge(t)
-	defer cleanup()
+	server := startFakeAdminServerNoChallenge(t)
+	defer server.cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/health/be1", nil)
-	msg := UpdateHealth(addr, "secret", "be1", HealthPost{Set_health: "sick"}, req)
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/group1/health/be1",
+		http.NoBody,
+	)
+
+	msg := UpdateHealth(
+		context.Background(),
+		server.address,
+		testSecret,
+		testBackendName,
+		HealthPost{SetHealth: testHealthSick},
+		request,
+	)
 	if !strings.Contains(msg, "Could not write packet") && !strings.Contains(msg, "no challenge code") && msg == "" {
 		t.Fatalf("unexpected response: %q", msg)
 	}
@@ -225,16 +303,23 @@ func TestUpdateHealthAuthError(t *testing.T) {
 func TestUpdateHealthReadError(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
+	server := startFakeAdminServer(t, func(cmd string) string {
 		if cmd == "backend.set_health be1 auto" {
-			return "__CLOSE__"
+			return testCloseToken
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/service/group1/health/be1", nil)
-	msg := UpdateHealth(addr, "secret", "be1", HealthPost{Set_health: "auto"}, req)
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/v1/service/group1/health/be1",
+		http.NoBody,
+	)
+
+	msg := UpdateHealth(context.Background(), server.address, testSecret, "be1", HealthPost{SetHealth: "auto"}, request)
 	if msg == "" || strings.Contains(msg, "updated with status") {
 		t.Fatalf("expected read error, got %q", msg)
 	}
@@ -243,7 +328,7 @@ func TestUpdateHealthReadError(t *testing.T) {
 func TestStatusHealthDialError(t *testing.T) {
 	t.Parallel()
 
-	backends := StatusHealth("127.0.0.1:1", "secret", "")
+	backends := StatusHealth(context.Background(), testClosedAddr, testSecret, "")
 	if len(backends) != 0 {
 		t.Fatalf("expected empty result, got %#v", backends)
 	}
@@ -252,15 +337,16 @@ func TestStatusHealthDialError(t *testing.T) {
 func TestStatusHealthReadError(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
-		if cmd == "backend.list" {
-			return "__CLOSE__"
+	server := startFakeAdminServer(t, func(cmd string) string {
+		if cmd == testBackendList {
+			return testCloseToken
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	backends := StatusHealth(addr, "secret", "")
+	backends := StatusHealth(context.Background(), server.address, testSecret, "")
 	if len(backends) != 0 {
 		t.Fatalf("expected empty result, got %#v", backends)
 	}

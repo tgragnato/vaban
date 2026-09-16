@@ -14,9 +14,11 @@ func TestVarnishAuthSuccess(t *testing.T) {
 
 	go func() {
 		defer serverConn.Close()
+
 		_, _ = serverConn.Write([]byte("107 0\n" + fakeChallenge + "\n"))
 
 		buf := make([]byte, 256)
+
 		_, err := serverConn.Read(buf)
 		if err != nil {
 			return
@@ -39,6 +41,7 @@ func TestVarnishAuthWithoutChallenge(t *testing.T) {
 
 	go func() {
 		defer serverConn.Close()
+
 		_, _ = serverConn.Write([]byte("107 0\nno challenge here\n"))
 	}()
 
@@ -46,6 +49,7 @@ func TestVarnishAuthWithoutChallenge(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
+
 	if !strings.Contains(err.Error(), "no challenge code") {
 		t.Fatalf("unexpected error: %v", err)
 	}

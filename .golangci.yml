@@ -1,0 +1,193 @@
+version: "2"
+
+run:
+  timeout: 5m
+  allow-parallel-runners: true
+
+linters:
+  enable:
+    - arangolint
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - clickhouselint
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - cyclop
+    - decorder
+    - depguard
+    - dogsled
+    - dupl
+    - dupword
+    - durationcheck
+    - embeddedstructfieldcheck
+    - err113
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exhaustruct_v5
+    - exptostd
+    - fatcontext
+    - forbidigo
+    - forcetypeassert
+    - funcorder
+    - funlen
+    - ginkgolinter
+    - gocheckcompilerdirectives
+    - gochecknoglobals
+    - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godoclint
+    - godot
+    - godox
+    - goheader
+    - gomoddirectives
+    - gomodguard_v2
+    - goprintffuncname
+    - gosec
+    - gosmopolitan
+    - govet
+    - grouper
+    - iface
+    - importas
+    - inamedparam
+    - ineffassign
+    - interfacebloat
+    - intrange
+    - iotamixing
+    - ireturn
+    - lll
+    - loggercheck
+    - maintidx
+    - makezero
+    - mirror
+    - misspell
+    - mnd
+    - modernize
+    - musttag
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - nlreturn
+    - noctx
+    - noinlineerr
+    - nolintlint
+    - nonamedreturns
+    - nosprintfhostport
+    - paralleltest
+    - perfsprint
+    - prealloc
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - recvcheck
+    - revive
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - tagalign
+    - tagliatelle
+    - testableexamples
+    - testifylint
+    - testpackage
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unqueryvet
+    - unused
+    - usestdlibvars
+    - usetesting
+    - varnamelen
+    - wastedassign
+    - whitespace
+    - wrapcheck
+    - wsl_v5
+    - zerologlint
+
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -ST1000   # Package comment not required on every file
+
+    ireturn:
+      allow:
+        - anon
+        - error
+        - empty
+        - stdlib
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - performance
+        - style
+
+    sloglint:
+      no-mixed-args: true   # ban mixing positional args and key-value pairs
+      kv-only: true         # all args after the message must be "key", value pairs
+
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - "disableStutteringCheck"   # "Foo is a Foo" allowed in comments
+
+    depguard:
+      rules:
+        Main:
+          list-mode: strict
+          allow:
+            - $gostd
+            - "github.com/codegangsta/negroni"
+            - "github.com/goccy/go-yaml"
+            - "github.com/julienschmidt/httprouter"
+            - "github.com/pilu/xrequestid"
+            - "github.com/sirupsen/logrus"
+            - "github.com/thoas/stats"
+            - "github.com/unrolled/render"
+          deny:
+            - pkg: "$all"
+              desc: "please use the allowed packages instead of importing arbitrary packages"
+
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: '^log\.Fatal(f|ln)?$'
+          msg: "use slog + error returns instead of log.Fatal (§Tooling)"
+        - pattern: '^os\.Exit$'
+          msg: "use error returns instead of os.Exit in library code (§Tooling)"
+        - pattern: '^panic(f|ln)?$'
+          msg: "use error returns instead of panic in library code (§Tooling)"
+
+  exclusions:
+    rules:
+
+      - linters:
+          - errcheck
+        path: _test\.go$
+
+      # main.go is the process boundary — os.Exit and log.Fatal are allowed
+      - linters:
+          - forbidigo
+        path: ^main\.go$
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

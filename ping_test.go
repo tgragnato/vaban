@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,70 +14,79 @@ import (
 func TestPingerSuccess(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
-		if cmd == "ping" {
+	server := startFakeAdminServer(t, func(cmd string) string {
+		if cmd == testPingCommand {
 			return "200 0        PONG 1.0      "
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	msg := Pinger(addr, "secret")
+	msg := Pinger(context.Background(), server.address, testSecret)
 	if !strings.Contains(msg, "PONG") {
 		t.Fatalf("expected PONG in response, got %q", msg)
 	}
 }
 
 func TestGetPingNotFound(t *testing.T) {
-	withServices(t, Services{})
+	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/service/missing/ping", nil)
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{{Key: "service", Value: "missing"}}
+	appState := newTestApplication(Services{})
 
-	GetPing(rr, req, ps)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/service/missing/ping", http.NoBody)
+	responseRecorder := httptest.NewRecorder()
+	ps := httprouter.Params{{Key: testServiceKey, Value: testMissing}}
 
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", rr.Code)
+	appState.GetPing(responseRecorder, req, ps)
+
+	if responseRecorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", responseRecorder.Code)
 	}
 }
 
 func TestGetPingSuccess(t *testing.T) {
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
-		if cmd == "ping" {
+	t.Parallel()
+
+	server := startFakeAdminServer(t, func(cmd string) string {
+		if cmd == testPingCommand {
 			return "200 0        PONG 1.0      "
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	withServices(t, Services{
-		"group1": {Hosts: []string{addr}, Secret: "secret"},
+	appState := newTestApplication(Services{
+		testGroup1: {Hosts: []string{server.address}, Secret: testSecret},
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/service/group1/ping", nil)
-	rr := httptest.NewRecorder()
-	ps := httprouter.Params{{Key: "service", Value: "group1"}}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/service/group1/ping", http.NoBody)
+	responseRecorder := httptest.NewRecorder()
+	ps := httprouter.Params{{Key: testServiceKey, Value: testGroup1}}
 
-	GetPing(rr, req, ps)
+	appState.GetPing(responseRecorder, req, ps)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rr.Code)
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", responseRecorder.Code)
 	}
 
 	var messages Messages
-	if err := json.Unmarshal(rr.Body.Bytes(), &messages); err != nil {
+
+	err := json.Unmarshal(responseRecorder.Body.Bytes(), &messages)
+	if err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if _, ok := messages[addr]; !ok {
-		t.Fatalf("expected message for host %s", addr)
+
+	if _, ok := messages[server.address]; !ok {
+		t.Fatalf("expected message for host %s", server.address)
 	}
 }
 
 func TestPingerDialError(t *testing.T) {
 	t.Parallel()
 
-	msg := Pinger("127.0.0.1:1", "secret")
+	msg := Pinger(context.Background(), testClosedAddr, testSecret)
 	if msg == "" {
 		t.Fatal("expected non-empty error message")
 	}
@@ -85,10 +95,10 @@ func TestPingerDialError(t *testing.T) {
 func TestPingerAuthError(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServerNoChallenge(t)
-	defer cleanup()
+	server := startFakeAdminServerNoChallenge(t)
+	defer server.cleanup()
 
-	msg := Pinger(addr, "secret")
+	msg := Pinger(context.Background(), server.address, testSecret)
 	if !strings.Contains(msg, "no challenge code") {
 		t.Fatalf("expected auth error, got %q", msg)
 	}
@@ -97,15 +107,16 @@ func TestPingerAuthError(t *testing.T) {
 func TestPingerReadError(t *testing.T) {
 	t.Parallel()
 
-	addr, cleanup := startFakeAdminServer(t, func(cmd string) string {
-		if cmd == "ping" {
-			return "__CLOSE__"
+	server := startFakeAdminServer(t, func(cmd string) string {
+		if cmd == testPingCommand {
+			return testCloseToken
 		}
+
 		return ""
 	})
-	defer cleanup()
+	defer server.cleanup()
 
-	msg := Pinger(addr, "secret")
+	msg := Pinger(context.Background(), server.address, testSecret)
 	if msg == "" || strings.Contains(msg, "PONG") {
 		t.Fatalf("expected read error, got %q", msg)
 	}
