@@ -8,11 +8,11 @@ import (
 	"os"
 
 	"github.com/codegangsta/negroni"
+	"github.com/goccy/go-yaml"
 	"github.com/julienschmidt/httprouter"
 	"github.com/pilu/xrequestid"
 	"github.com/thoas/stats"
 	"github.com/unrolled/render"
-	"gopkg.in/yaml.v3"
 )
 
 type Message struct {

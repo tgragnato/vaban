@@ -12,7 +12,7 @@ It supports Varnish 6/7+, Authentication, Pattern-based/VCL-based banning, healt
 #### Dependencies
 
 * Git
-* Go 1.22+
+* Go 1.27+
 
 #### Clone and Build locally:
 
