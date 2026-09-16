@@ -177,7 +177,7 @@ func StatusHealth(server string, secret string, backend string) Backends {
 		return backends
 	}
 	status := string(byte_health[:n])
-	for _, line := range strings.Split(status, "\n") {
+	for line := range strings.SplitSeq(status, "\n") {
 		list := strings.Fields(line)
 		if len(list) >= 4 && list[0] != "Backend" {
 			hs := HealthStatus{
