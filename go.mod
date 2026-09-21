@@ -9,7 +9,7 @@ require (
 	github.com/pilu/xrequestid v0.0.0-20160221113542-870344eeaa6c
 	github.com/sirupsen/logrus v1.10.2
 	github.com/thoas/stats v0.0.0-20190407194641-965cb2de1678
-	github.com/unrolled/render v1.7.0
+	github.com/unrolled/render v1.8.1
 )
 
 require (
