@@ -1,5 +1,11 @@
 # Vaban
 
+[![Go](https://github.com/tgragnato/vaban/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/tgragnato/vaban/actions/workflows/go.yml)
+[![Test Cross Compilation without CGo](https://github.com/tgragnato/vaban/actions/workflows/cross.yml/badge.svg)](https://github.com/tgragnato/vaban/actions/workflows/cross.yml)
+[![CodeQL](https://github.com/tgragnato/vaban/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tgragnato/vaban/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/tgragnato/vaban/branch/main/graph/badge.svg)](https://codecov.io/gh/tgragnato/vaban)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/tgragnato/vaban)
+
 *A quick and easy way to control clusters of Varnish Cache hosts using a RESTful JSON API.*
 
 Vaban is built in Go for high performance, concurrency and simplicity. Every request and every ban spawns its own lightweight thread.
