@@ -1,8 +1,8 @@
 # Vaban
 
-[![Go](https://github.com/tgragnato/vaban/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/tgragnato/vaban/actions/workflows/go.yml)
-[![Test Cross Compilation without CGo](https://github.com/tgragnato/vaban/actions/workflows/cross.yml/badge.svg)](https://github.com/tgragnato/vaban/actions/workflows/cross.yml)
-[![CodeQL](https://github.com/tgragnato/vaban/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tgragnato/vaban/actions/workflows/codeql.yml)
+[![Go](https://tgragnato.it/vaban/actions/workflows/go.yml/badge.svg?branch=main)](https://tgragnato.it/vaban/actions/workflows/go.yml)
+[![Test Cross Compilation without CGo](https://tgragnato.it/vaban/actions/workflows/cross.yml/badge.svg)](https://tgragnato.it/vaban/actions/workflows/cross.yml)
+[![CodeQL](https://tgragnato.it/vaban/actions/workflows/codeql.yml/badge.svg?branch=main)](https://tgragnato.it/vaban/actions/workflows/codeql.yml)
 [![codecov](https://codecov.io/gh/tgragnato/vaban/branch/main/graph/badge.svg)](https://codecov.io/gh/tgragnato/vaban)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/tgragnato/vaban)
 
@@ -23,7 +23,7 @@ It supports Varnish 6/7+, Authentication, Pattern-based/VCL-based banning, healt
 #### Clone and Build locally:
 
 ``` sh
-git clone https://github.com/tgragnato/vaban.git
+git clone https://tgragnato.it/vaban.git
 cd vaban
 go build
 ```

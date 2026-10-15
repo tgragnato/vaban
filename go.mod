@@ -1,4 +1,4 @@
-module github.com/tgragnato/vaban
+module tgragnato.it/vaban
 
 go 1.27.0
 

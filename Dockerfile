@@ -17,7 +17,7 @@ COPY --from=sbomgen /vaban.spdx.json /var/lib/db/sbom/vaban.spdx.json
 ENTRYPOINT ["/usr/bin/vaban"]
 LABEL org.opencontainers.image.title="vaban"
 LABEL org.opencontainers.image.description="Simple and Really Fast Varnish Cache Cluster Manager (for Varnish 6.x/7.x)"
-LABEL org.opencontainers.image.url="https://github.com/tgragnato/vaban/"
-LABEL org.opencontainers.image.source="https://github.com/tgragnato/vaban/"
+LABEL org.opencontainers.image.url="https://tgragnato.it/vaban/"
+LABEL org.opencontainers.image.source="https://tgragnato.it/vaban/"
 LABEL license="MIT"
 LABEL io.containers.autoupdate=registry
